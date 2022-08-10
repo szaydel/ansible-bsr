@@ -16,6 +16,7 @@ ZFS_DATASET_DESTROY_ENDPOINT = "/internal/v1/dataset/destroy"
 SHELL_RUN_ENDPOINT = "/internal/v1/shell/run"
 ZFS_CMD = "/usr/sbin/zfs"
 BSRZFS_CMD = "/usr/racktop/sbin/bsrzfs"
+API_TIMEOUT = 5
 
 # READ_ONLY_PROPS = (
 #     "casesensitivity",
@@ -110,8 +111,9 @@ class BsrApiCommandResponse:
 
 
 class DatasetErrors(Enum):
-    DoesNotExist = 1000
-    Exists = 1001
+    ConnectionTimeout = 1000
+    DoesNotExist = 1001
+    Exists = 1002
     RequiresRecursiveDestroy = 1020
     DoesNotHaveEnoughSpace = 1030
 
@@ -168,6 +170,7 @@ class AnsibleBsrApiClient:
         self.port = port
         self.token = None
         self.verify = verify
+        self.api_conn_err = None
 
     def url(self, route):
         return f"https://{self.host}:{self.port}/{route.lstrip('/')}"
@@ -182,15 +185,24 @@ class AnsibleBsrApiClient:
 
     def _login(self, username: str, passwd: str):
         with suppress_insecure_https_warnings():
-            resp = requests.post(
-                self.url("/login"), auth=(username, passwd), verify=self.verify
-            )
-            if resp.status_code == 200:
-                token_obj = resp.json()
-                if not token_obj["token"]:
-                    raise LoginError("Token value cannot be an empty string")
-                return token_obj["token"]
-            raise LoginError(resp.content.__str__())
+            try:
+                resp = requests.post(
+                    self.url("/login"),
+                    auth=(username, passwd),
+                    verify=self.verify,
+                    timeout=API_TIMEOUT,
+                )
+                if resp.status_code == 200:
+                    token_obj = resp.json()
+                    if not token_obj["token"]:
+                        raise LoginError("Token value cannot be an empty string")
+                    return token_obj["token"]
+                raise LoginError(resp.content.__str__())
+            # This will happen if we cannot connect to the API, which may or
+            # may not be bsrapid.
+            except requests.exceptions.ConnectTimeout as err:
+                self.api_conn_err = err
+                return None
 
     def login(self):
         self.token = self._login(self.cr.user, self.cr.passwd)
@@ -202,39 +214,52 @@ class AnsibleBsrApiClient:
         if not self.token:
             # We don't bother checking for error here. If there is a problem
             # with login, an exception will be surfaced below.
-            self.login()
+            if self.login() is None:
+                if self.api_conn_err is not None:
+                    raise DatasetQueryError(
+                        DatasetErrors.ConnectionTimeout,
+                        "API Connection Error",
+                        self.api_conn_err.args[0],
+                    )
+                else:
+                    raise DatasetQueryError(
+                        DatasetErrors.ConnectionTimeout, "API Connection Error"
+                    )
+            # return self.login() is not None
+        return True
 
-    def post_shell_command(
-        self, cmd: str, args: str = "", use_shell=True, is_query=True
-    ) -> Dict:
-        """Sends a command POST request to API. This may or may not be a
-        mutating command.
+    # def post_shell_command(
+    #     self, cmd: str, args: str = "", use_shell=True, is_query=True, requests=requests
+    # ) -> Dict:
+    #     """Sends a command POST request to API. This may or may not be a
+    #     mutating command.
 
-        Args:
-            cmd (str): Command to execute on the appliance.
-            args (str, optional): Arguments which the command will accept. Defaults to "".
+    #     Args:
+    #         cmd (str): Command to execute on the appliance.
+    #         args (str, optional): Arguments which the command will accept. Defaults to "".
+    #         requests (_type_, optional): Allows injection of custom requests implementation. Defaults to requests.
 
-        Returns:
-            dict: Response object from the API call, converted into a dict.
-        """
-        self.auth_if_required()
+    #     Returns:
+    #         dict: Response object from the API call, converted into a dict.
+    #     """
+    #     self.auth_if_required()
 
-        cmd_data = {
-            "Command": cmd,
-            "Args": args,
-            "UseShell": use_shell,
-            "IsQuery": is_query,
-            "OperationOptions": {"ClientTxId": ""},
-        }
+    #     cmd_data = {
+    #         "Command": cmd,
+    #         "Args": args,
+    #         "UseShell": use_shell,
+    #         "IsQuery": is_query,
+    #         "OperationOptions": {"ClientTxId": ""},
+    #     }
 
-        with suppress_insecure_https_warnings():
-            resp = requests.post(
-                self.url(SHELL_RUN_ENDPOINT),
-                headers=self._headers,
-                data=json.dumps(cmd_data),
-                verify=self.verify,
-            )
-        return resp.json()
+    #     with suppress_insecure_https_warnings():
+    #         resp = requests.post(
+    #             self.url(SHELL_RUN_ENDPOINT),
+    #             headers=self._headers,
+    #             data=json.dumps(cmd_data),
+    #             verify=self.verify,
+    #         )
+    #     return resp.json()
 
     def _parse_dataset_details(self, props_str: str):
         props = dict()
@@ -279,6 +304,7 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 data=json.dumps(cmd),
                 verify=self.verify,
+                timeout=API_TIMEOUT,
             )
             result = BsrApiCommandResponse(resp.json())
             if result.command_failed:
@@ -291,23 +317,23 @@ class AnsibleBsrApiClient:
 
     def _raise_with_details(self, result: BsrApiCommandResponse):
         if result.command_failed:
-            if "size is greater than available space" in result.stderr:
+            if (
+                "size is greater than available space" in result.stderr
+                or "out of space" in result.stderr
+            ):
                 raise DatasetQueryError(
                     DatasetErrors.DoesNotHaveEnoughSpace, None, result.stderr
                 )
             elif "dataset already exists" in result.stderr:
-                raise DatasetQueryError(
-                    DatasetErrors.Exists, None, result.stderr
-                )
+                raise DatasetQueryError(DatasetErrors.Exists, None, result.stderr)
             raise DatasetQueryError(result.exit_code, None, result.stderr)
-        return
-
+        return result
 
     def create_dataset(self, ds_path: str, requests=requests, **props):
         args = f'create {" ".join([f"-o {k}={v}" for k, v in props.items()])} {ds_path}'
 
         data = {
-            "Command": "/usr/racktop/sbin/bsrzfs",
+            "Command": BSRZFS_CMD,
             "Args": args,
             "UseShell": False,
             "IsQuery": False,
@@ -319,20 +345,10 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 data=json.dumps(data),
                 verify=self.verify,
+                timeout=API_TIMEOUT,
             )
             result = BsrApiCommandResponse(resp.json())
-            # if result.command_failed:
-            #     if "dataset already exists" in result.stderr:
-            #         raise DatasetQueryError(
-            #             DatasetErrors.Exists, None, result.stderr
-            #         )
-            #     elif "size is greater than available space" in result.stderr:
-            #         raise DatasetQueryError(
-            #             DatasetErrors.DoesNotHaveEnoughSpace, None, result.stderr
-            #         )
-            #     raise DatasetQueryError(result.exit_code, None, result.stderr)
-            self._raise_with_details(result)
-            return result
+            return self._raise_with_details(result)
 
     def set_dataset_properties(self, ds_path: str, requests=requests, **props):
         if not props:
@@ -352,6 +368,7 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 data=json.dumps(data),
                 verify=self.verify,
+                timeout=API_TIMEOUT,
             )
             result = BsrApiCommandResponse(resp.json())
             # if result.command_failed:
@@ -393,6 +410,7 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 data=json.dumps(data),
                 verify=self.verify,
+                timeout=API_TIMEOUT,
             )
             result = BsrApiCommandResponse(resp.json())
             if result.command_failed:
@@ -437,6 +455,7 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 data=json.dumps(data),
                 verify=self.verify,
+                timeout=API_TIMEOUT,
             )
             result = BsrApiCommandResponse(resp.json())
             if result.command_failed:
@@ -464,6 +483,7 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 data=json.dumps(data),
                 verify=self.verify,
+                timeout=API_TIMEOUT,
             )
             # It is not straight-forward to tell here whether we actually
             # succeeded or failed, because the API returns 200 and we may fail
@@ -508,6 +528,7 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 params={"dataset": ds_path},
                 verify=self.verify,
+                timeout=API_TIMEOUT,
             )
             if resp.status_code == 200:
                 return True

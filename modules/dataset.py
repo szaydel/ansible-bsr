@@ -1,15 +1,7 @@
 #!/usr/bin/env python3
 __metaclass__ = type
 from dataclasses import dataclass
-from email.policy import default
-from random import choices
 from ansible.module_utils.basic import AnsibleModule
-from urllib.parse import urlencode
-
-from contextlib import contextmanager
-
-from copy import deepcopy
-from typing import Dict
 
 if True:
     from ..module_utils import api_datasets
@@ -233,6 +225,8 @@ def main():
                 msg = f"No changes made to dataset {ds_path}"
             result["comment"] = msg
         else:
+            if resp.error != "":
+                msg += f" | {resp.error}"
             module.fail_json(msg, **result)
 
     elif params["state"] == "absent":
