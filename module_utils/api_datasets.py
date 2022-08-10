@@ -251,6 +251,7 @@ class Dataset:
         """
         # If we are setting specific properties, merge them into the pre-defined
         # properties dict.
+        create_err = None
         try:
             self._seed_with_default_props()
             if props:
@@ -281,14 +282,21 @@ class Dataset:
                 },
             )
         except DatasetQueryError as err:
-            # If the dataset already exists, we are going to apply properties
-            # and see whether any changes were actually made by comparing
-            # properties before and after we apply them.
-            if err.error_code == DatasetErrors.Exists:
-                props_before = self._filtered_dict(
-                    api_client.get_dataset_properties(ds_path), IGNORED_PROPS
-                )
-                self.props = props
+            # FIXME: This is a bit crap, but avoids having another try/except
+            # nested under this top-level try/except.
+            create_err = err
+        # If the dataset already exists, we are going to apply properties
+        # and see whether any changes were actually made by comparing
+        # properties before and after we apply them.
+        # Dataset create case: existing dataset
+        if create_err.error_code == DatasetErrors.Exists:
+            props_before = self._filtered_dict(
+                api_client.get_dataset_properties(ds_path), IGNORED_PROPS
+            )
+            self.props = props
+            # This is spaghetti code and it will need to be improved.
+            # Exceptions here make sense, but nesting them is less than ideal.
+            try:
                 api_client.set_dataset_properties(ds_path, **self._dataset_props)
                 props_after = self._filtered_dict(
                     api_client.get_dataset_properties(ds_path), IGNORED_PROPS
@@ -311,21 +319,29 @@ class Dataset:
                         "outcome": "unchanged",
                     },
                 )
-            elif err.error_code == DatasetErrors.DoesNotHaveEnoughSpace:
-                return DatasetTaskResult(
-                        succeeded=False,
-                        changed=False,
-                        error=err.args[0],
-                        details={},
-                    )
-            else:
+            except DatasetQueryError as err:
                 return DatasetTaskResult(
                     succeeded=False,
                     changed=False,
                     error=err.args[0],
                     details={},
                 )
-
+        # Dataset create case: space issue, could be quotas/reservations
+        elif create_err.error_code == DatasetErrors.DoesNotHaveEnoughSpace:
+            return DatasetTaskResult(
+                succeeded=False,
+                changed=False,
+                error=create_err.args[0],
+                details={},
+            )
+        # Dataset create case: issues other than existing or capacity
+        else:
+            return DatasetTaskResult(
+                succeeded=False,
+                changed=False,
+                error=create_err.args[0],
+                details={},
+            )
 
     def destroy_dataset(
         self, ds_path, api_client: AnsibleBsrApiClient, recursive=False
