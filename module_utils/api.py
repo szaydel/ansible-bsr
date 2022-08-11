@@ -241,12 +241,14 @@ class AnsibleBsrApiClient:
         cr: ApiCreds,
         host="localhost",
         port=8443,
+        timeout=API_TIMEOUT,
         verify=False,
     ) -> None:
         self.cr = cr
         self.host = host
         self.port = port
         self.token = None
+        self.timeout = timeout
         self.verify = verify
         self.api_conn_err = None
 
@@ -268,7 +270,7 @@ class AnsibleBsrApiClient:
                     self.url("/login"),
                     auth=(username, passwd),
                     verify=self.verify,
-                    timeout=API_TIMEOUT,
+                    timeout=self.timeout,
                 )
                 if resp.status_code == 200:
                     token_obj = resp.json()
@@ -375,7 +377,7 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 data=json.dumps(cmd),
                 verify=self.verify,
-                timeout=API_TIMEOUT,
+                timeout=self.timeout,
             )
             result = BsrApiCommandResponse(resp.json())
             if result.failed:
@@ -416,7 +418,7 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 data=json.dumps(data),
                 verify=self.verify,
-                timeout=API_TIMEOUT,
+                timeout=self.timeout,
             )
             result = BsrApiCommandResponse(resp.json())
             return self._raise_command_failure(result)
@@ -454,7 +456,7 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 data=json.dumps(data),
                 verify=self.verify,
-                timeout=API_TIMEOUT,
+                timeout=self.timeout,
             )
             result = BsrApiCommandResponse(resp.json())
             self._raise_command_failure(result)
@@ -472,7 +474,7 @@ class AnsibleBsrApiClient:
                     "resolve_identities": True,
                 },
                 verify=self.verify,
-                timeout=API_TIMEOUT,
+                timeout=self.timeout,
             )
             result = BsrApiPermsRespose(resp.json(), failed=resp.status_code != 200)
             if result.failed:
@@ -541,7 +543,7 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 data=json.dumps(data),
                 verify=self.verify,
-                timeout=API_TIMEOUT,
+                timeout=self.timeout,
             )
             result = BsrApiPermsRespose(resp.json())
             if result.failed:
@@ -581,7 +583,7 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 data=json.dumps(data),
                 verify=self.verify,
-                timeout=API_TIMEOUT,
+                timeout=self.timeout,
             )
             result = BsrApiCommandResponse(resp.json())
             if result.failed:
@@ -626,7 +628,7 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 data=json.dumps(data),
                 verify=self.verify,
-                timeout=API_TIMEOUT,
+                timeout=self.timeout,
             )
             result = BsrApiCommandResponse(resp.json())
             if result.failed:
@@ -654,7 +656,7 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 data=json.dumps(data),
                 verify=self.verify,
-                timeout=API_TIMEOUT,
+                timeout=self.timeout,
             )
             # It is not straight-forward to tell here whether we actually
             # succeeded or failed, because the API returns 200 and we may fail
@@ -699,7 +701,7 @@ class AnsibleBsrApiClient:
                 headers=self._headers,
                 params={"dataset": ds_path},
                 verify=self.verify,
-                timeout=API_TIMEOUT,
+                timeout=self.timeout,
             )
             if resp.status_code == 200:
                 return True
