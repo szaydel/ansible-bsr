@@ -27,34 +27,6 @@ IGNORED_PROPS = (
     # "written",
 )
 
-# I will remove this junk once I am confident that it is no longer useful for
-# troubleshooting purposes.
-# {"Command":"/usr/racktop/sbin/bsrzfs","Args":"create -o aclinherit=passthrough -o aclmode=passthrough -o atime=on -o canmount=on -o checksum=fletcher4 -o compression=lz4 -o copies=1 -o devices=on -o exec=on -o filesystem_limit=none -o logbias=latency -o nbmand=on -o casesensitivity=mixed -o normalization=none -o utf8only=off -o primarycache=all -o quota=none -o readonly=off -o recordsize=131072 -o redundant_metadata=all
-# -o refquota=none
-# -o refreservation=none
-# -o reservation=none
-# -o secondarycache=all
-# -o setuid=on
-# -o snapdir=hidden
-# -o snapshot_limit=none
-# -o sync=standard
-# -o vscan=off
-# -o xattr=on
-# -o zoned=off
-# -o racktop:storage_profile=general_filesystem
-# -o racktop:encoded_description=
-# -o smartfolders=off
-# -o racktop:ub_suspend=
-# -o racktop:ub_thresholds=null
-# -o racktop:ub_trial=
-# -o racktop:version=1
-# -o sharenfs=off
-# -o sharesmb=off p01/global/xyz",
-# "UseShell":false,"IsQuery":false,"ActionId":"647abe67-41ef-4019-809c-a607c9079154"}
-
-
-# {"Operation":{"RequestTimestamp":"2022-07-26T21:50:44.771987259Z","ResponseTimestamp":"2022-07-26T21:50:44.795556469Z","TxId":"28336ad9f1af4da8b3ef6926bef1121d","ClientTxId":"","ApiVersion":"bsrapid/23.3.0DEV.0","IsComplete":true},"Result":{"ExitCode":1,"StdOut":"","StdErr":"cannot create \'bp/alpha\': dataset already exists","CmdString":"/usr/racktop/sbin/bsrzfs create -o aclinherit=passthrough -o aclmode=passthrough -o atime=on -o canmount=on -o checksum=fletcher4 -o compression=lz4 -o copies=1 -o devices=on -o exec=on -o filesystem_limit=none -o logbias=latency -o nbmand=on -o casesensitivity=mixed -o normalization=none -o utf8only=off -o primarycache=all -o quota=none -o readonly=off -o recordsize=131072 -o redundant_metadata=all -o refquota=none -o refreservation=none -o reservation=none -o secondarycache=all -o setuid=on -o snapdir=hidden -o snapshot_limit=none -o sync=standard -o vscan=off -o xattr=on -o zoned=off -o racktop:storage_profile=general_filesystem -o racktop:encoded_description= -o smartfolders=off -o racktop:ub_suspend= -o racktop:ub_thresholds=null -o racktop:ub_trial= -o racktop:version=1 -o sharenfs=off -o sharesmb=off bp/alpha","ExecutionTime":"23.231309ms"}
-
 
 class Dataset:
     # Most of these settings we will never change. But, we are passing all the
@@ -370,3 +342,83 @@ class Dataset:
                 succeeded=False, changed=False, error=err.args[0], details={}
             )
         return DatasetTaskResult(succeeded=True, changed=True, error=None, details={})
+
+    def set_permissions(
+        self,
+        ds_path: str,
+        acl: List[Dict[str, str]],
+        owner_sid: str,
+        owner_group_sid: str,
+        api_client: AnsibleBsrApiClient,
+        recursive=False,
+    ):
+        # Store previous settings and capture the dataset ID required in the
+        # call to apply ACLs.
+        try:
+            old_settings = api_client.get_dataset_perms(ds_path)
+            ds_id = old_settings.dataset_id
+        except DatasetQueryError as err:
+            return DatasetTaskResult(
+                succeeded=False,
+                changed=False,
+                error=err.args[0],
+                details={"operation": "lookup ACLs before making changes"},
+            )
+        try:
+            new_settings = api_client.set_dataset_perms(
+                ds_id, acl, owner_sid, owner_group_sid, recursive
+            )
+        except DatasetQueryError as err:
+            return DatasetTaskResult(
+                succeeded=False,
+                changed=False,
+                error=err.args[0],
+                details={"operation": "application of ACLs"},
+            )
+
+        # We assume that the ACL array sort is stable. We want to figure out if
+        # there was a state change. Therefore we compare elements which may
+        # have changed.
+
+        old_acl = old_settings.acl
+        new_acl = new_settings.acl
+        removed = []
+        added = []
+        owner_sid_changed = old_settings.owner_sid != new_settings.owner_sid
+        owner_group_sid_changed = (
+            old_settings.owner_group_sid != new_settings.owner_group_sid
+        )
+
+        # We want to set this to true if something changed.
+        changed = owner_sid_changed or owner_group_sid_changed
+
+        # Resolve differences between the original ACL and the new ACL.
+        # We create two lists here, one which contains additions and another containing removals.
+        for a in old_acl:
+            found = False
+            for b in new_acl:
+                if a == b:
+                    found = True
+            if not found:
+                removed.append(a)
+        for a in new_acl:
+            found = False
+            for b in old_acl:
+                if a == b:
+                    found = True
+            if not found:
+                added.append(a)
+
+        changed = changed or added != [] or removed != []
+
+        return DatasetTaskResult(
+            succeeded=True,
+            changed=changed,
+            error="",
+            details={
+                "added_acl": added,
+                "removed_acl": removed,
+                "owner_sid changed": owner_sid_changed,
+                "owner_group_sid changed": owner_group_sid_changed,
+            },
+        )

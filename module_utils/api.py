@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 import json
-from sys import stderr
-from typing import Dict
-from urllib.parse import urlencode
+from typing import List, Dict
+
+from pprint import pprint
 
 from enum import Enum
 
@@ -13,7 +13,10 @@ from contextlib import contextmanager
 
 ZFS_DATASET_ENDPOINT = "/internal/v1/zfs/dataset"
 ZFS_DATASET_DESTROY_ENDPOINT = "/internal/v1/dataset/destroy"
+ZFS_DATASET_PERMS_ENDPOINT = "/internal/v1/fs/perms"
+ZFS_DATASET_PERMS_APPLY_ENDPOINT = "/internal/v1/fs/perms/apply"
 SHELL_RUN_ENDPOINT = "/internal/v1/shell/run"
+
 ZFS_CMD = "/usr/sbin/zfs"
 BSRZFS_CMD = "/usr/racktop/sbin/bsrzfs"
 API_TIMEOUT = 5
@@ -84,22 +87,97 @@ KNOWN_PROPS = (
 )
 
 
+class BsrApiPermsRespose:
+    def __init__(self, resp_obj: Dict, failed=False):
+        self._data = resp_obj.get("Data")
+        self._perms = resp_obj.get("Permissions")
+        self._task = resp_obj.get("Task")
+        self._acl = None
+        self._failed = failed
+        self._owner_group_sid = None
+        self._owner_sid = None
+        self._dataset_id = None
+        self._error_code = 0
+        if not self._failed:
+            # Permissions is an array in the response object, but it looks like
+            # we get only one item in the array when we are dealing with a
+            # single dataset. This may need to be improved later, but for now
+            # this seems to be sufficient.
+            if self._perms:
+                self._acl = self._perms[0].get("Acl")
+                self._dataset_id = self._perms[0].get("DatasetId")
+                self._owner_group_sid = self._perms[0].get("OwnerGroupSid")
+                self._owner_sid = self._perms[0].get("OwnerSid")
+            elif self._task:
+                self._acl = self._task.get("Acl")
+                self._dataset_id = self._task.get("DatasetId")
+                self._owner_group_sid = self._task.get("OwnerGroupSid")
+                self._owner_sid = self._task.get("OwnerSid")
+        else:
+            self._error_code = self._data["Code"]
+            if "Dataset not found" in self._data["Message"]:
+                self._error_code = DatasetErrors.DoesNotExist
+
+    @property
+    def failed(self):
+        return self._failed
+
+    @property
+    def error_code(self):
+        return self._error_code
+
+    @property
+    def error_message(self):
+        if self._failed:
+            return self._data.get("Message")
+
+    @property
+    def error_type(self):
+        if self._failed:
+            return self._data.get("ErrType")
+        return None
+
+    @property
+    def permissions(self):
+        return self._perms[0]
+
+    @property
+    def dataset_id(self) -> str:
+        return self._dataset_id
+
+    @property
+    def owner_group_sid(self) -> str:
+        return self._owner_group_sid
+
+    @property
+    def owner_sid(self) -> str:
+        return self._owner_sid
+
+    @property
+    def acl(self) -> List[Dict[str, str]]:
+        return self._acl
+
+    def acl_iter(self):
+        for ace in self._acl:
+            yield ace
+
+
 class BsrApiCommandResponse:
     def __init__(self, resp_obj):
         self.result: dict = resp_obj.get("Result", {})
         if not self.result:
             raise EmptyRespObject("Cannot handle an empty API response")
-        self._exit_code = self.result.get("ExitCode", "-1")
+        self._error_code = self.result.get("ExitCode", "-1")
         self._stdout = self.result.get("StdOut")
         self._stderr = self.result.get("StdErr")
 
     @property
-    def command_failed(self):
-        return self._exit_code != 0
+    def failed(self):
+        return self._error_code != 0
 
     @property
-    def exit_code(self):
-        return self._exit_code
+    def error_code(self):
+        return self._error_code
 
     @property
     def stdout(self):
@@ -212,20 +290,13 @@ class AnsibleBsrApiClient:
         # not expired. We may have our token, but it may not be usable any
         # longer.
         if not self.token:
-            # We don't bother checking for error here. If there is a problem
-            # with login, an exception will be surfaced below.
-            if self.login() is None:
-                if self.api_conn_err is not None:
-                    raise DatasetQueryError(
-                        DatasetErrors.ConnectionTimeout,
-                        "API Connection Error",
-                        self.api_conn_err.args[0],
-                    )
-                else:
-                    raise DatasetQueryError(
-                        DatasetErrors.ConnectionTimeout, "API Connection Error"
-                    )
-            # return self.login() is not None
+            self.login()
+            if self.api_conn_err is not None:
+                raise DatasetQueryError(
+                    DatasetErrors.ConnectionTimeout,
+                    "API Connection Error",
+                    self.api_conn_err.args[0],
+                )
         return True
 
     # def post_shell_command(
@@ -307,16 +378,16 @@ class AnsibleBsrApiClient:
                 timeout=API_TIMEOUT,
             )
             result = BsrApiCommandResponse(resp.json())
-            if result.command_failed:
+            if result.failed:
                 if "dataset does not exist" in result.stderr:
                     raise DatasetQueryError(
                         DatasetErrors.DoesNotExist, None, result.stderr
                     )
-                raise DatasetQueryError(result.exit_code, None, result.stderr)
+                raise DatasetQueryError(result.error_code, None, result.stderr)
         return self._parse_dataset_details(result.stdout)
 
-    def _raise_with_details(self, result: BsrApiCommandResponse):
-        if result.command_failed:
+    def _raise_command_failure(self, result: BsrApiCommandResponse):
+        if result.failed:
             if (
                 "size is greater than available space" in result.stderr
                 or "out of space" in result.stderr
@@ -326,7 +397,7 @@ class AnsibleBsrApiClient:
                 )
             elif "dataset already exists" in result.stderr:
                 raise DatasetQueryError(DatasetErrors.Exists, None, result.stderr)
-            raise DatasetQueryError(result.exit_code, None, result.stderr)
+            raise DatasetQueryError(result.error_code, None, result.stderr)
         return result
 
     def create_dataset(self, ds_path: str, requests=requests, **props):
@@ -348,9 +419,24 @@ class AnsibleBsrApiClient:
                 timeout=API_TIMEOUT,
             )
             result = BsrApiCommandResponse(resp.json())
-            return self._raise_with_details(result)
+            return self._raise_command_failure(result)
 
-    def set_dataset_properties(self, ds_path: str, requests=requests, **props):
+    def set_dataset_properties(
+        self, ds_path: str, requests=requests, **props
+    ) -> BsrApiCommandResponse:
+        """Sets dataset properties.
+
+        Args:
+            ds_path (str): Properties are set on this dataset.
+            requests (_type_, optional): Allows injection of custom requests implementation. Defaults to requests.
+
+        Raises:
+            DatasetQueryError: An exception with some information about what failed.
+            ValueError: Raised when props is an empty dictionary.
+
+        Returns:
+            BsrApiCommandResponse: Response from the API converted into a native type.
+        """
         if not props:
             raise ValueError("properties argument cannot be an empty dictionary")
         args = f'set {" ".join([f"{k}={v}" for k, v in props.items()])} {ds_path}'
@@ -371,10 +457,95 @@ class AnsibleBsrApiClient:
                 timeout=API_TIMEOUT,
             )
             result = BsrApiCommandResponse(resp.json())
-            # if result.command_failed:
-            #     raise DatasetQueryError(result.exit_code, None, result.stderr)
-            # return result
-            self._raise_with_details(result)
+            self._raise_command_failure(result)
+            return result
+
+    def get_dataset_perms(self, ds_path: str, requests=requests) -> BsrApiPermsRespose:
+        with suppress_insecure_https_warnings():
+            self.auth_if_required()
+            resp = requests.get(
+                self.url(ZFS_DATASET_PERMS_ENDPOINT),
+                headers=self._headers,
+                params={
+                    "dataset": ds_path,
+                    "recursive": True,
+                    "resolve_identities": True,
+                },
+                verify=self.verify,
+                timeout=API_TIMEOUT,
+            )
+            result = BsrApiPermsRespose(resp.json(), failed=resp.status_code != 200)
+            if result.failed:
+                # Dataset not existing is a common scenario, but we
+                # unfortunately do not get a 404 in this scenario. We get a 500
+                # instead. A bit of tweaking happens in the __init__ of
+                # BsrApiPermsResponse letting us alter our message in the case
+                # this is a well known failure mode.
+                if result.error_code == DatasetErrors.DoesNotExist:
+                    raise DatasetQueryError(
+                        result.error_code,
+                        result.error_type,
+                        f"unable to obtain ACL because dataset {ds_path} does not appear to exist",
+                    )
+                raise DatasetQueryError(
+                    result.error_code, result.error_type, result.error_message
+                )
+            return result
+
+    def set_dataset_perms(
+        self,
+        ds_id: str,
+        acl: List[Dict[str, str]],
+        owner_sid: str,
+        owner_group_sid: str,
+        recursive=False,
+        requests=requests,
+    ) -> BsrApiPermsRespose:
+        """Modifies ACL and sets User SID and Group SID on the given dataset.
+
+        Args:
+            ds_id (str): Dataset ID instead of the usual dataset path.
+            acl (List[Dict[str, str]]): List of ACEs that should be applied to the dataset.
+            owner_sid (str): SID of the user who owns this dataset.
+            owner_group_sid (str): Group SID of the group owner of this dataset.
+            recursive (bool, optional): Whether or not this change should be applied recursively. Defaults to False.
+            requests (_type_, optional): Allows injection of custom requests implementation. Defaults to requests.
+
+        Raises:
+            DatasetQueryError: An exception with some information about what failed.
+
+        Returns:
+            BsrApiPermsRespose: Response from the API converted into a native type.
+        """
+        # First, we need to convert the name of the dataset to an ID, which we
+        # will use in a subsequent call to apply settings to the filesystem.
+        # We do not bother trying to auth here, because it will happen in the
+        # get_dataset_perms method call. We do not bother handling an exception
+        # which may be raised here and let it bubble up to the caller. This
+        # interface is meant for consumption outside of this class and by
+        # extension exceptions raised.
+        data = {
+            "DatasetId": ds_id,
+            "Recursive": recursive,
+            "SingleDatasetOnly": False,  # I still don't fully grok this one
+            "Acl": acl,
+            "OwnerSid": owner_sid,
+            "OwnerGroupSid": owner_group_sid,
+            "WaitUntilComplete": False,
+            "ClientTxId": None,
+        }
+        with suppress_insecure_https_warnings():
+            self.auth_if_required()
+            resp = requests.post(
+                self.url(ZFS_DATASET_PERMS_APPLY_ENDPOINT),
+                headers=self._headers,
+                data=json.dumps(data),
+                verify=self.verify,
+                timeout=API_TIMEOUT,
+            )
+            result = BsrApiPermsRespose(resp.json())
+            if result.failed:
+                raise DatasetQueryError(result.error_code, None, result.stderr)
             return result
 
     def share_dataset(
@@ -413,8 +584,8 @@ class AnsibleBsrApiClient:
                 timeout=API_TIMEOUT,
             )
             result = BsrApiCommandResponse(resp.json())
-            if result.command_failed:
-                raise DatasetQueryError(result.exit_code, None, result.stderr)
+            if result.failed:
+                raise DatasetQueryError(result.error_code, None, result.stderr)
             return result
 
     def unshare_dataset(
@@ -458,8 +629,8 @@ class AnsibleBsrApiClient:
                 timeout=API_TIMEOUT,
             )
             result = BsrApiCommandResponse(resp.json())
-            if result.command_failed:
-                raise DatasetQueryError(result.exit_code, None, result.stderr)
+            if result.failed:
+                raise DatasetQueryError(result.error_code, None, result.stderr)
             return result
 
     def destroy_dataset(self, ds_path: str, recursive=False) -> bool:
