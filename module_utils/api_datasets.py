@@ -27,6 +27,80 @@ IGNORED_PROPS = (
     # "written",
 )
 
+ALL_POSSIBLE_PROPS = (
+    "type",
+    "creation",
+    "used",
+    "available",
+    "referenced",
+    "compressratio",
+    "mounted",
+    "quota",
+    "reservation",
+    "recordsize",
+    "mountpoint",
+    "sharenfs",
+    "checksum",
+    "compression",
+    "atime",
+    "devices",
+    "exec",
+    "setuid",
+    "readonly",
+    "zoned",
+    "snapdir",
+    "aclmode",
+    "aclinherit",
+    "createtxg",
+    "canmount",
+    "xattr",
+    "copies",
+    "version",
+    "utf8only",
+    "normalization",
+    "casesensitivity",
+    "vscan",
+    "nbmand",
+    "sharesmb",
+    "refquota",
+    "refreservation",
+    "guid",
+    "primarycache",
+    "secondarycache",
+    "usedbysnapshots",
+    "usedbydataset",
+    "usedbychildren",
+    "usedbyrefreservation",
+    "logbias",
+    "dedup",
+    "mlslabel",
+    "sync",
+    "dnodesize",
+    "refcompressratio",
+    "written",
+    "logicalused",
+    "logicalreferenced",
+    "filesystem_limit",
+    "snapshot_limit",
+    "filesystem_count",
+    "snapshot_count",
+    "redundant_metadata",
+    "special_small_blocks",
+    "encryption",
+    "keylocation",
+    "keyformat",
+    "pbkdf2iters",
+    "smartfolders",
+    "smartfs",
+    "racktop:ub",
+    "racktop:storage_profile",
+    "racktop:ub_thresholds",
+    "racktop:ub_suspend",
+    "racktop:ub_trial",
+    "racktop:version",
+    "racktop:encoded_description",
+)
+
 
 class Dataset:
     # Most of these settings we will never change. But, we are passing all the
@@ -421,4 +495,63 @@ class Dataset:
                 "owner_sid changed": owner_sid_changed,
                 "owner_group_sid changed": owner_group_sid_changed,
             },
+        )
+
+    def configure_smb_share(
+        self, ds_path: str, api_client: AnsibleBsrApiClient
+    ) -> DatasetTaskResult:
+        """Shares out a given dataset specified by ds_path with supplied share configuration.
+
+        Args:
+            ds_path (str): Path to dataset to be shared out.
+            api_client (AnsibleBsrApiClient): Configured API client object.
+
+        Returns:
+            DatasetTaskResult: Describes the outcome from the request made to the shell API.
+        """
+        if not api_client.is_existing_dataset(ds_path):
+            return DatasetTaskResult(
+                succeeded=False,
+                changed=False,
+                error=f"cannot share non-existent dataset {ds_path}",
+                details={},
+            )
+
+        filtered = tuple(
+            [p for p in ALL_POSSIBLE_PROPS if p not in ("sharesmb", "racktop:ub")]
+        )
+        props_before = dict(
+            self._filtered_dict(api_client.get_dataset_properties(ds_path), filtered)
+        )
+
+        try:
+            api_client.set_dataset_properties(ds_path, **self._dataset_props)
+        except DatasetQueryError as err:
+            return DatasetTaskResult(
+                succeeded=False,
+                changed=False,
+                error=err.args[0],
+                details={"operation": "setting dataset share properties"},
+            )
+
+        props_after = dict(
+            self._filtered_dict(api_client.get_dataset_properties(ds_path), filtered)
+        )
+
+        changed = dict(set(set(props_after.items() - props_before.items())))
+
+        details = dict()
+        if changed:
+            details = (
+                {
+                    "before": dict(props_before),
+                    "after": dict(props_after),
+                    "changes": bool(changed),
+                },
+            )
+        return DatasetTaskResult(
+            succeeded=True,
+            changed=bool(changed),
+            error="",
+            details=details,
         )
