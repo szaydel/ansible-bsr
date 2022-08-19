@@ -180,7 +180,6 @@ def main():
     if module.check_mode:
         module.exit_json(**result)
 
-    result["exp"] = module.params["exp"]
     ds_path = module.params["ds_path"]
     params = module.params
     result["comment"] = "No changes were made"
@@ -220,7 +219,7 @@ def main():
                 msg = f"Created dataset {ds_path}"
             elif outcome == "modified":
                 msg = f"Modified properties on dataset {ds_path}"
-                result["state"] = {"updates": resp.details["updates"]}
+                result["details"] = {"updates": resp.details["updates"]}
             elif outcome == "unchanged":
                 msg = f"No changes made to dataset {ds_path}"
             result["comment"] = msg
