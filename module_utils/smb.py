@@ -12,12 +12,30 @@ from .netacl import raise_on_conflict
 class SMBShare:
     name: str
     abe: bool  # Access Based Enumeration
-    csc: bool  # Client-side Caching (enabling this breaks UB)
+    csc: str  # Client-side Caching (enabling this breaks UB)
     encrypt: str
     read_only: str
     read_write: str
     none: str
     ub: bool
+
+    @property
+    def property_pairs(self):
+        parts = []
+        parts.append(f"name={self.name}")
+        parts.append(f"abe={'true' if self.abe_setting else 'false'}")
+        parts.append(f"csc={self.csc_setting}")
+        parts.append(f"encrypt={self.encrypt_setting}")
+        if self.read_only_list() is not None:
+            parts.append(f"ro={self.fmt_read_only_list}")
+        if self.read_write_list() is not None:
+            parts.append(f"rw={self.fmt_read_write_list}")
+        if self.none_list() is not None:
+            parts.append(f"none={self.fmt_none_list}")
+        return {
+            "sharesmb": ",".join(parts),
+            "racktop:ub": f"{'on' if self.ub_setting else 'off'}",
+        }
 
     @property
     def csc_setting(self):
