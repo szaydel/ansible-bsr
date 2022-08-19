@@ -16,9 +16,15 @@ class InvalidAddressSpecification(Exception):
 class IPNetHostList:
     """Provides a class with convenience methods over the list of nets and hosts to be included in the ACL."""
 
-    def __init__(self, addrs: str):
-        self._addrs = addrs
-        self._addrs_list = self._list_from_addrs_string()
+    def __init__(self, addrs: str or List[str] = None):
+        self._addrs_list = None
+        if isinstance(addrs, list):
+            self._addrs_list = addrs
+        elif isinstance(addrs, str):
+            self._addrs = addrs
+            self._addrs_list = self._list_from_addrs_string()
+        else:
+            raise TypeError("Only str and list are valid types for addrs")
         self._hosts, self._nets, self._others = self._split_nets_and_hosts()
 
     @property
@@ -92,23 +98,26 @@ class IPNetHostList:
     def _split_nets_and_hosts(
         self,
     ) -> Tuple[Tuple[ipaddress.IPv4Address], Tuple[ipaddress.IPv4Network], Tuple[str]]:
-        addr_list = self._list_from_addrs_string()
+        addrs_list = self._addrs_list
         hosts: List[ipaddress.IPv4Address] = list()
         nets: List[ipaddress.IPv4Network] = list()
         other: List[str] = list()
-        for elem in addr_list:
+        for elem in addrs_list:
             if elem == "":
                 continue
-            # if not elem[0] == "@":
-            #     continue
-            # All of the IP elements should have the '@' prefix.
             if elem[0].isalpha():
                 other.append(elem)
             elif "/" in elem:
-                n = ipaddress.IPv4Network(elem[1:])
+                if elem[0] == "@":
+                    n = ipaddress.IPv4Network(elem[1:])
+                else:
+                    n = ipaddress.IPv4Network(elem)
                 nets.append(n)
             else:
-                h = ipaddress.IPv4Address(elem[1:])
+                if elem[0] == "@":
+                    h = ipaddress.IPv4Address(elem[1:])
+                else:
+                    h = ipaddress.IPv4Address(elem)
                 hosts.append(h)
         return tuple(hosts), tuple(nets), tuple(other)
 
@@ -167,7 +176,7 @@ def raise_on_conflict(ro_list: IPNetHostList, rw_list: IPNetHostList):
 class TestIPNetHostList(unittest.TestCase):
     def test_list_from_addrs_string_is_correct(self):
         addrs = IPNetHostList(
-            "10.100.10.0/24:10.2.0.0/16:192.168.100.1:192.168.100.5:alpha.beta.com"
+            "10.100.10.0/24:10.2.0.0/16:192.168.100.1:192.168.100.5:alpha.beta.com:beta.gamma.epsilon"
         )
         self.assertEqual(
             addrs._addrs_list,
@@ -177,28 +186,52 @@ class TestIPNetHostList(unittest.TestCase):
                 "@192.168.100.1",
                 "@192.168.100.5",
                 "alpha.beta.com",
+                "beta.gamma.epsilon",
             ),
         )
 
     def test_list_creation_is_correct(self):
-        test_list = IPNetHostList(
-            "10.100.10.0/24:10.2.0.0/16:192.168.100.1:192.168.100.5"
+        test_cases = (
+            {
+                "list": "10.100.10.0/24:10.2.0.0/16:192.168.100.1:192.168.100.5:alpha.beta.gamma",
+                "want": {
+                    "hosts": (
+                        ipaddress.IPv4Address("192.168.100.1"),
+                        ipaddress.IPv4Address("192.168.100.5"),
+                    ),
+                    "nets": (
+                        ipaddress.IPv4Network("10.100.10.0/24"),
+                        ipaddress.IPv4Network("10.2.0.0/16"),
+                    ),
+                    "others": ("alpha.beta.gamma",),
+                },
+            },
+            {
+                "list": [
+                    "10.100.10.0/24",
+                    "10.2.0.0/16",
+                    "192.168.100.1",
+                    "192.168.100.5",
+                    "alpha.beta.gamma",
+                ],
+                "want": {
+                    "hosts": (
+                        ipaddress.IPv4Address("192.168.100.1"),
+                        ipaddress.IPv4Address("192.168.100.5"),
+                    ),
+                    "nets": (
+                        ipaddress.IPv4Network("10.100.10.0/24"),
+                        ipaddress.IPv4Network("10.2.0.0/16"),
+                    ),
+                    "others": ("alpha.beta.gamma",),
+                },
+            },
         )
-
-        self.assertEqual(
-            test_list.hosts,
-            (
-                ipaddress.IPv4Address("192.168.100.1"),
-                ipaddress.IPv4Address("192.168.100.5"),
-            ),
-        )
-        self.assertEqual(
-            test_list.nets,
-            (
-                ipaddress.IPv4Network("10.100.10.0/24"),
-                ipaddress.IPv4Network("10.2.0.0/16"),
-            ),
-        )
+        for case in test_cases:
+            test_list = IPNetHostList(case["list"])
+            self.assertEqual(test_list.hosts, case["want"]["hosts"])
+            self.assertEqual(test_list.nets, case["want"]["nets"])
+            self.assertEqual(test_list.others, case["want"]["others"])
 
     def test_net_has_host_bits(self):
         with self.assertRaises(InvalidAddressSpecification) as e:
