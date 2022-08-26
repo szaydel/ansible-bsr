@@ -10,6 +10,10 @@ from .api import KNOWN_PROPS
 
 @dataclass
 class DatasetTaskResult:
+    """
+    An object normally returned to consumer of methods on the Dataset class.
+    """
+
     succeeded: bool
     changed: bool
     error: str
@@ -103,6 +107,11 @@ ALL_POSSIBLE_PROPS = (
 
 
 class Dataset:
+    """
+    Dataset is class encapsulating methods used to manage datasets on the
+    BrickStor appliance.
+    """
+
     # Most of these settings we will never change. But, we are passing all the
     # settings to the backend as opposed to inheriting settings from the parent
     # dataset when we are creating a new dataset. Otherwise the dataset we are

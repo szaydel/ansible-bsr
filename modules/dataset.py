@@ -2,6 +2,7 @@
 __metaclass__ = type
 from dataclasses import dataclass
 from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.basic import env_fallback
 
 if True:
     from ..module_utils import api_datasets
@@ -29,12 +30,6 @@ not provide the capability to share datasets, but does manage there existence
 and their various attributes.
 
 
-        quota=dict(type="str", required=False, default=None),
-        refquota=dict(type="str", required=False, default=None),
-        reservation=dict(type="str", required=False, default=None),
-        refreservation=dict(type="str", required=False, default=None),
-        nbmand=dict(type="str", default="on", choices=["on", "off"]),
-
 options:
     host:
         description: Address of the BrickStor HTTP API server.
@@ -60,10 +55,6 @@ options:
         description: Storage profile which should be assigned at the time of filesystem creation.
         required: false
         type: str
-    enable_ub:
-        description: Controls user behavior monitoring on the dataset.
-        required: false
-        type: bool
     recursive:
         description:
             - Enables recursive operation on datasets. 
@@ -109,7 +100,10 @@ options:
         description: Non-blocking mandatory locking. This setting may may to dataset sharing.
         required: false
         type: str
-
+    state:
+        description: Specifies expected state of the share, i.e. whether or not it should be present.
+        required: false
+        type: str
 
 # Specify this value according to your collection
 # in format of namespace.collection.doc_fragment_name
@@ -127,11 +121,18 @@ def main():
         host=dict(type="str", required=False, default="localhost"),
         port=dict(type="int", required=False, default=8443),
         username=dict(type="str", required=False, default="root"),
-        password=dict(type="str", required=True, no_log=True),
+        password=dict(
+            type="str",
+            required=True,
+            no_log=True,
+            fallback=(env_fallback, ["ANSIBLE_BRICKSTOR_PASSWORD"]),
+        ),
         ds_path=dict(type="str", required=True),
         # The following applies to destroys
         recursive=dict(type="bool", required=False, default=False),
-        state=dict(type="str", default="present", choices=["absent", "present"]),
+        state=dict(
+            type="str", required=False, default="present", choices=["absent", "present"]
+        ),
         # The following dataset properties could be influenced by the user.
         # FIXME: Should have choices here for storage_profile beyond custom and
         # default.
@@ -141,7 +142,7 @@ def main():
             choices=["general_filesystem", "custom_filesystem", "vmware_filesystem"],
             default="general_filesystem",
         ),
-        enable_ub=dict(type="bool", required=False, default=True),
+        # ub=dict(type="bool", required=False, default=True),
         aclmode=dict(
             type="str",
             default="passthrough",
@@ -158,7 +159,6 @@ def main():
         reservation=dict(type="str", required=False, default=None),
         refreservation=dict(type="str", required=False, default=None),
         nbmand=dict(type="str", default="on", choices=["on", "off"]),
-        exp=dict(type="list", required=False, default=[]),
     )
 
     # seed the result dict in the object
@@ -180,8 +180,8 @@ def main():
     if module.check_mode:
         module.exit_json(**result)
 
-    ds_path = module.params["ds_path"]
     params = module.params
+    ds_path = params["ds_path"]
     result["comment"] = "No changes were made"
 
     c = api.AnsibleBsrApiClient(
@@ -202,7 +202,7 @@ def main():
             "refreservation": params["refreservation"],
             "nbmand": params["nbmand"],
             "racktop:storage_profile": params["storage_profile"],
-            "racktop:ub": params["enable_ub"],
+            # "racktop:ub": True,
         }
 
         # If the dataset already exists, the underlying API is going to attempt
