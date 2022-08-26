@@ -1,0 +1,188 @@
+- name: share module test playbook
+  hosts: localhost
+  gather_facts: no
+  vars:
+    username: root
+    # Fill this with a password or use the ANSIBLE_BRICKSTOR_PASSWORD
+    # environment variable instead.
+    password: XXXXXXXX
+    share_a_ro_access_list:
+      - 10.1.100.0/24
+      - 10.2.100.0/24
+      # - 10.2.3.5 # Uncomment this to trigger module failure due to an address conflict
+    share_a_rw_access_list:
+      - 10.1.101.0/24
+      - 10.2.101.0/24
+      # - 10.5.101.300/24 # Uncomment this to trigger module failure due to an invalid host/network address.
+    share_c_ro_access_list:
+      - 10.1.100.0/24
+      - 10.2.100.0/24
+      - alpha.beta.gamma
+      # - 10.2.3.5 # Uncomment this to trigger module failure due to an address conflict
+    share_c_rw_access_list:
+      - 10.1.101.0/24
+      - 10.2.101.0/24
+      - beta.alpha.gamma
+    share_c_no_access_list:
+      - bogus.bogus.org
+
+    share_alphabet_ro_access_list:
+      - 10.1.100.0/24
+      - 10.2.100.0/24
+      - alpha.beta.gamma
+      # - 10.2.3.5 # Uncomment this to trigger module failure due to an address conflict
+    share_alphabet_rw_access_list:
+      - 10.1.101.0/24
+      - 10.2.101.0/24
+      - beta.alpha.gamma
+    share_alphabet_no_access_list:
+      - bogus.bogus.org
+    share_d_ro_access_list:
+      - 10.1.100.0/24
+      - 10.2.100.0/24
+      # - 10.2.3.5 # Uncomment this to trigger module failure due to an address conflict
+    share_d_rw_access_list:
+      - 10.1.2.0/24
+      - 10.2.3.0/24
+      # - 10.2.2.0/22 # Uncomment this to trigger Value error resulting from host bits being set
+    share_d_no_access_list:
+      - 192.168.5.0/24
+    acls:
+      - {
+        "Sid": "S-1-5-32-766",
+        "PermissionFlags": "rwxpdDaARWcCos",
+        "InheritanceFlags": "fd-----",
+        "AccessType": "Allow"
+      }
+      - {
+        "Sid": "S-1-5-21-2103861846-1878089256-521690406-1499",
+        "PermissionFlags": "rwxpdDaARWcCos",
+        "InheritanceFlags": "fd-----",
+        "AccessType": "Allow"
+      }
+    owner_sid: "S-1-5-21-2248978774-777778061-3960601210-1000"
+    owner_gsid: "S-1-5-21-2248978774-777778061-3960601210-1000"
+
+    acl_owner: {"Sid":"S-1-5-32-766","PermissionFlags":"rwxpdDaARWcCos","InheritanceFlags":"fd-----","AccessType":"Allow"}
+
+  tasks:
+    - name: SMB share exists on dataset p01/global/a
+      share:
+        ds_path: p01/global/a
+        username: "{{ username }}"
+        password: "{{ password }}"
+        host: 10.2.22.87
+        state: present
+        proto: smb
+        abe: true
+        csc: manual
+        ro_access_list: "{{ share_a_ro_access_list }}"
+        rw_access_list: "{{ share_a_rw_access_list }}"
+        no_access_list: null
+        filesystem_acls: "{{ acls }}"
+        owner_group_sid: "{{ owner_gsid }}"
+        owner_sid: "{{ owner_sid }}"
+        ub: true
+      register: testout1
+
+    # - name: SMB share exists on dataset p01/global/b
+    #   share:
+    #     ds_path: p01/global/b
+    #     username: "{{ username }}"
+    #     password: "{{ password }}"
+    #     host: 10.2.22.87
+    #     state: present
+    #     proto: smb
+    #     abe: false
+    #     csc: manual
+    #     ro_access_list: "{{ share_d_ro_access_list }}"
+    #     rw_access_list: "{{ share_d_rw_access_list }}"
+    #     no_access_list: "{{ share_d_no_access_list }}"
+    #     filesystem_acls: "{{ acls }}"
+    #     owner_group_sid: "{{ owner_gsid }}"
+    #     owner_sid: "{{ owner_sid }}"
+    #     # owner_sid: this-is-bogus
+    #     ub: true
+    #   register: testout2
+
+    - name: SMB share absent on dataset p01/global/b
+      share:
+        ds_path: p01/global/b
+        username: "{{ username }}"
+        # password: "{{ password }}"
+        host: 10.2.22.87
+        state: absent
+        proto: smb
+        ub: false
+      register: testout3
+
+    - name: SMB share exists on dataset p01/global/c
+      share:
+        ds_path: p01/global/c
+        username: "{{ username }}"
+        password: "{{ password }}"
+        host: 10.2.22.87
+        state: present
+        proto: smb
+        abe: false
+        csc: manual
+        ro_access_list: "{{ share_c_ro_access_list }}"
+        rw_access_list: "{{ share_c_rw_access_list }}"
+        no_access_list: "{{ share_c_no_access_list }}"
+        filesystem_acls: "{{ acls }}"
+        owner_group_sid: "{{ owner_gsid }}"
+        owner_sid: "{{ owner_sid }}"
+        ub: false
+      register: testout4
+
+
+    - name: SMB share exists on the greek alphabet datasets
+      share:
+        ds_path: "p01/global/{{ item }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        host: 10.2.22.87
+        state: present
+        proto: smb
+        abe: false
+        csc: manual
+        ro_access_list: "{{ share_alphabet_ro_access_list }}"
+        rw_access_list: "{{ share_alphabet_rw_access_list }}"
+        no_access_list: "{{ share_alphabet_no_access_list }}"
+        filesystem_acls: "{{ acls }}"
+        owner_group_sid: "{{ owner_gsid }}"
+        owner_sid: "{{ owner_sid }}"
+        ub: false
+      loop:
+        - alpha
+        - beta
+        - gamma
+        - delta
+        - epsilon
+        - zeta
+        - eta
+        - theta
+        - iota
+        - kappa
+        - lambda
+        - mu
+        - nu
+        - xi
+        - omicron
+        - pi
+        - rho
+        - sigma
+        - tau
+        - upsilon
+        - phi
+        - chi
+        - psi
+        - omega
+    # - name: output debug testout1
+    #   debug:
+    #     msg: '{{ testout1 }}'
+
+    # - name: output debug testout3
+    #   debug:
+    #     msg: '{{ testout3 }}'
+
