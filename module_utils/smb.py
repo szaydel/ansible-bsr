@@ -23,7 +23,7 @@ class SMBShare:
     def property_pairs(self):
         parts = []
         parts.append(f"name={self.name}")
-        parts.append(f"abe={'true' if self.abe_setting else 'false'}")
+        parts.append(f"abe={'enabled' if self.abe_setting else 'disabled'}")
         parts.append(f"csc={self.csc_setting}")
         parts.append(f"encrypt={self.encrypt_setting}")
         if self.read_only_list() is not None:
