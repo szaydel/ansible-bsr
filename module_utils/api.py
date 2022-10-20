@@ -19,7 +19,7 @@ SHELL_RUN_ENDPOINT = "/internal/v1/shell/run"
 
 ZFS_CMD = "/usr/sbin/zfs"
 BSRZFS_CMD = "/usr/racktop/sbin/bsrzfs"
-API_TIMEOUT = 5
+API_TIMEOUT = 60
 
 # READ_ONLY_PROPS = (
 #     "casesensitivity",
