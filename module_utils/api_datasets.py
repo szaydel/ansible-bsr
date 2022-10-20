@@ -153,7 +153,7 @@ class Dataset:
         "smartfolders": "off",
         "racktop:ub": "on",
         "racktop:ub_suspend": "",
-        "racktop:ub_thresholds": None,
+        "racktop:ub_thresholds": "null", # We store some things as 'none' and some as 'null', like this one
         "racktop:ub_trial": "",
         "racktop:version": 1,
         "sharenfs": "off",
