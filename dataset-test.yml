@@ -5,7 +5,8 @@
     username: root
     # Fill this with a password or use the ANSIBLE_BRICKSTOR_PASSWORD
     # environment variable instead.
-    password:  "{{ lookup('env','ANSIBLE_BRICKSTOR_PASSWORD') }}"
+    password: "{{ lookup('env','ANSIBLE_BRICKSTOR_PASSWORD') }}"
+    host: 10.2.22.87
 
   tasks:
   - name: Create dataset p01/global/a
@@ -13,7 +14,7 @@
       ds_path: p01/global/a
       username: "{{ username }}"
       password: "{{ password }}"
-      host: 10.2.22.87
+      host: "{{ host }}"
       state: present
       atime: on
       quota: 3M
@@ -30,7 +31,7 @@
       ds_path: p01/global/b
       username: "{{ username }}"
       password: "{{ password }}"
-      host: 10.2.22.87
+      host: "{{ host }}"
       state: present
       atime: on
       quota: 2M
@@ -42,26 +43,26 @@
     debug:
       msg: '{{ testout2 }}'
 
-  # - name: Create dataset p01/global/c
-  #   dataset:
-  #     ds_path: p01/global/c
-  #     username: root
-  #     password: racktop1
-  #     host: 10.2.22.87
-  #     state: present
-  #     atime: on
-  #     quota: 5M
-  #     refquota: 5M
-  #     reservation: 3M
-  #     refreservation: 3M
-  #   register: testout3
+  - name: Create dataset p01/global/c
+    dataset:
+      ds_path: p01/global/c
+      username: "{{ username }}"
+      password: "{{ password }}"
+      host: "{{ host }}"
+      state: present
+      atime: on
+      quota: 5M
+      refquota: 5M
+      reservation: 3M
+      refreservation: 3M
+    register: testout3
 
   - name: Create multiple datasets @ p01/global
     dataset:
       ds_path: "p01/global/{{ item }}"
       username: "{{ username }}"
       password: "{{ password }}"
-      host: 10.2.22.87
+      host: "{{ host }}"
       state: present
       atime: on
       quota: 15M
@@ -93,4 +94,4 @@
       - chi
       - psi
       - omega
-    register: testout3
+    register: testout_alphabet_soup
