@@ -188,6 +188,7 @@ def share_is_present(module, result):
     csc = params["csc"]
     encrypt = params["encrypt"]
     ub = params["ub"]
+    novss = params["novss"]
     proto = params["proto"]
     owner_sid = params["owner_sid"]
     owner_group_sid = params["owner_group_sid"]
@@ -219,12 +220,13 @@ def share_is_present(module, result):
         # We have to support NFS and SMB here. For the moment it is only SMB.
         share = smb.SMBShare(
             share_name,
-            abe,
             csc,
             encrypt,
             ro_access_list,
             rw_access_list,
             no_access_list,
+            abe,
+            novss,
             ub,
         )
         try:
@@ -282,6 +284,7 @@ def run_module():
             default="required",
             choices=["disabled", "enabled", "required"],
         ),
+        novss=dict(type="bool", required=False, default=False),
         ub=dict(type="bool", required=False, default=True),
         state=dict(
             type="str", required=False, default="present", choices=["absent", "present"]

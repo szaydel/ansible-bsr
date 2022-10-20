@@ -11,13 +11,14 @@ from .netacl import raise_on_conflict
 @dataclass
 class SMBShare:
     name: str
-    abe: bool  # Access Based Enumeration
     csc: str  # Client-side Caching (enabling this breaks UB)
     encrypt: str
     read_only: str
     read_write: str
     none: str
-    ub: bool
+    abe: bool = False  # Access Based Enumeration
+    novss: bool = False  # Whether or not Previous Versions should be available
+    ub: bool = True
 
     @property
     def property_pairs(self):
@@ -62,7 +63,13 @@ class SMBShare:
     def ub_setting(self):
         if isinstance(self.ub, bool):
             return self.ub
-        raise TypeError(f"Invalid type for racktop:ub option: {self.abe}")
+        raise TypeError(f"Invalid type for racktop:ub option: {self.ub}")
+
+    @property
+    def novss_setting(self):
+        if isinstance(self.novss, bool):
+            return self.novss
+        raise TypeError(f"Invalid type for novss option: {self.novss}")
 
     def __str__(self):
         parts = []
@@ -70,6 +77,8 @@ class SMBShare:
         parts.append(f"abe={'true' if self.abe_setting else 'false'}")
         parts.append(f"csc={self.csc_setting}")
         parts.append(f"encrypt={self.encrypt_setting}")
+        if self.novss_setting:  # Only include this property if it is enabled
+            parts.append("novss=true")
         if self.read_only_list() is not None:
             parts.append(f"ro={self.fmt_read_only_list}")
         if self.read_write_list() is not None:
@@ -200,6 +209,20 @@ class TestSMBShare(unittest.TestCase):
                     ub=False,
                 ),
                 "want": "sharesmb=name=test,abe=true,csc=disabled,encrypt=required,ro=@10.0.0.0/8:@10.1.0.0/16:@12.13.14.0/24:@1.2.3.4:foobar.alpha.com,rw=@5.6.0.0/24:@12.13.15.3,none=@10.0.0.0/8:alpha.beta.com racktop:ub=off",
+            },
+            {
+                "params": SMBShare(
+                    name="test",
+                    abe=True,
+                    csc="disabled",
+                    encrypt="required",
+                    read_only="10.0.0.0/8:1.2.3.4:10.1.0.0/16:12.13.14.0/24:foobar.alpha.com",
+                    read_write="12.13.15.3:5.6.0.0/24",
+                    none="10.0.0.0/8:alpha.beta.com",
+                    novss=True,
+                    ub=False,
+                ),
+                "want": "sharesmb=name=test,abe=true,csc=disabled,encrypt=required,novss=true,ro=@10.0.0.0/8:@10.1.0.0/16:@12.13.14.0/24:@1.2.3.4:foobar.alpha.com,rw=@5.6.0.0/24:@12.13.15.3,none=@10.0.0.0/8:alpha.beta.com racktop:ub=off",
             },
         )
         for case in test_cases:
