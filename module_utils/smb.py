@@ -23,7 +23,7 @@ class SMBShare:
     def property_pairs(self):
         parts = []
         parts.append(f"name={self.name}")
-        parts.append(f"abe={'enabled' if self.abe_setting else 'disabled'}")
+        parts.append(f"abe={'true' if self.abe_setting else 'false'}")
         parts.append(f"csc={self.csc_setting}")
         parts.append(f"encrypt={self.encrypt_setting}")
         if self.read_only_list() is not None:
@@ -174,6 +174,19 @@ class TestSMBShare(unittest.TestCase):
                     ub=True,
                 ),
                 "want": "sharesmb=name=test,abe=true,csc=disabled,encrypt=required,ro=@10.0.0.0/8:@10.1.0.0/16:@12.13.14.0/24:@1.2.3.4:foobar.alpha.com,rw=@5.6.0.0/24:@12.13.15.3,none=@10.0.0.0/8 racktop:ub=on",
+            },
+            {
+                "params": SMBShare(
+                    name="test",
+                    abe=False,
+                    csc="disabled",
+                    encrypt="required",
+                    read_only="10.0.0.0/8:1.2.3.4:10.1.0.0/16:12.13.14.0/24:foobar.alpha.com",
+                    read_write="12.13.15.3:5.6.0.0/24",
+                    none="10.0.0.0/8",
+                    ub=True,
+                ),
+                "want": "sharesmb=name=test,abe=false,csc=disabled,encrypt=required,ro=@10.0.0.0/8:@10.1.0.0/16:@12.13.14.0/24:@1.2.3.4:foobar.alpha.com,rw=@5.6.0.0/24:@12.13.15.3,none=@10.0.0.0/8 racktop:ub=on",
             },
             {
                 "params": SMBShare(
