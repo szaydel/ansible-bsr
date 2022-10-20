@@ -5,7 +5,8 @@
     username: root
     # Fill this with a password or use the ANSIBLE_BRICKSTOR_PASSWORD
     # environment variable instead.
-    password: XXXXXXXX
+    password:  "{{ lookup('env','ANSIBLE_BRICKSTOR_PASSWORD') }}"
+
     share_a_ro_access_list:
       - 10.1.100.0/24
       - 10.2.100.0/24

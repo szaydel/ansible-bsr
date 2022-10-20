@@ -5,7 +5,7 @@
     username: root
     # Fill this with a password or use the ANSIBLE_BRICKSTOR_PASSWORD
     # environment variable instead.
-    password: XXXXXXXX
+    password:  "{{ lookup('env','ANSIBLE_BRICKSTOR_PASSWORD') }}"
 
   tasks:
   - name: Create dataset p01/global/a
